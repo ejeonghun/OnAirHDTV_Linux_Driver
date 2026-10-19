@@ -1,0 +1,40 @@
+name: Driver build matrix
+
+# Compile-tests the driver against distro kernel-header packages and vanilla
+# kernel.org trees (Linux 4.4 to current). Each target runs in its own docker
+# container via ci/matrix.sh, the same script used for local runs.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['onairgt.c', 'Kbuild', 'Makefile', 'dkms.conf', 'kheaders.sh', 'fallback-kheaders/**', 'ci/**', '.github/workflows/build.yml']
+  pull_request:
+    paths: ['onairgt.c', 'Kbuild', 'Makefile', 'dkms.conf', 'kheaders.sh', 'fallback-kheaders/**', 'ci/**', '.github/workflows/build.yml']
+  schedule:
+    - cron: '0 3 * * 1'   # weekly: distro header packages move on
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - ubuntu-18.04        # 4.15 GA
+          - ubuntu-18.04-hwe    # 5.4 HWE
+          - ubuntu-20.04
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - debian-11
+          - debian-12
+          - debian-13
+          - fedora
+          - vanilla-4.4.302     # Synology DSM 7.x "4.4" platforms
+          - vanilla-5.10.55     # Synology DSM 7.x "5.10" platforms
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile
+        run: sh ci/matrix.sh ${{ matrix.target }}

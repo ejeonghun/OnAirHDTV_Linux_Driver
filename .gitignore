@@ -1,0 +1,38 @@
+# build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+Module.symvers
+modules.order
+.tmp_versions/
+# proprietary firmware / vendor binaries must never be committed
+*.fw
+*.sys
+*.bin
+*.rom
+# local
+.omc/
+# kernel headers downloaded by kheaders.sh, compile-matrix logs, packages
+kheaders/
+ci/logs/
+/dist/
+*.deb
+*.rpm
+# DSM build output (bundles go to GitHub Releases, not git)
+synology/dist/
+synology/work/
+# vendor/extracted artifacts (never commit)
+*.hex
+*.ihx
+onairgt_fx2*
+*.exe
+*.dll
+*.inf
+*.cat
+*.zip
+*.pcap
+*.ko.zst
+*.tgz

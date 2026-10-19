@@ -1,0 +1,24 @@
+#!/bin/sh
+# Register onairgt with DKMS and build it for every kernel whose headers are
+# installed. Later kernels are built by DKMS itself (AUTOINSTALL).
+set -e
+
+NAME=onairgt
+VERSION=@VERSION@
+
+if [ "$1" = configure ]; then
+	# versions left by an upgrade
+	for v in $(dkms status -m "$NAME" 2>/dev/null | sed -n "s|^${NAME}[/,] *\([^,:]*\).*|\1|p" | sort -u); do
+		[ "$v" = "$VERSION" ] || dkms remove -m "$NAME" -v "$v" --all >/dev/null 2>&1 || true
+	done
+	dkms status -m "$NAME" -v "$VERSION" 2>/dev/null | grep -q . || dkms add -m "$NAME" -v "$VERSION"
+	for d in /lib/modules/*/build; do
+		[ -e "$d/Makefile" ] || continue
+		k=${d%/build}
+		k=${k##*/}
+		dkms install -m "$NAME" -v "$VERSION" -k "$k" ||
+			echo "onairgt-dkms: build for $k failed, see /var/lib/dkms/$NAME/$VERSION/build/make.log" >&2
+	done
+fi
+
+exit 0

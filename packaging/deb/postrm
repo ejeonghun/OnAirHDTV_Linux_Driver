@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+# kernel-private headers fetched by the DKMS builds (see dkms.conf)
+if [ "$1" = purge ]; then
+	rm -rf /var/cache/onairgt
+fi
+
+exit 0

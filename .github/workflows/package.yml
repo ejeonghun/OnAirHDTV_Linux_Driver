@@ -1,0 +1,64 @@
+name: DKMS packages
+
+# Builds onairgt-dkms .deb and .rpm (packaging/), installs each one in a
+# container to check that DKMS builds the module (packaging/smoke-test.sh),
+# and attaches them to the GitHub Release on tags.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag against dkms.conf
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          ver=$(sed -n 's/^PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
+          [ "v$ver" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != dkms.conf $ver"; exit 1; }
+      - name: Build
+        run: sh packaging/build-deb.sh dist
+      - name: Install test (ubuntu:24.04)
+        run: docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 sh -c 'sh /src/packaging/smoke-test.sh /src/dist/*.deb'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  rpm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (fedora:latest)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src fedora:latest sh -c '
+            dnf -q -y install rpm-build make tar git >/dev/null &&
+            git config --global --add safe.directory /src &&
+            sh packaging/build-rpm.sh dist'
+      - name: Install test (fedora:latest)
+        run: docker run --rm -v "$PWD:/src:ro" fedora:latest sh -c 'sh /src/packaging/smoke-test.sh /src/dist/*.rpm'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [deb, rpm]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            deb/*.deb
+            rpm/*.rpm

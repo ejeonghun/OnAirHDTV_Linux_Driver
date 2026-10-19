@@ -1,0 +1,63 @@
+name: DSM bundles
+
+# Builds the experimental Synology DSM / Xpenology module bundles
+# (synology/build-dsm.sh) and attaches them to GitHub Releases on tags.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: ['onairgt.c', 'synology/**', '.github/workflows/dsm.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux 5.10.55
+          - { platform: epyc7002,     experimental: false }
+          - { platform: geminilakenk, experimental: false }
+          - { platform: r1000nk,      experimental: true }
+          - { platform: v1000nk,      experimental: true }
+          # Linux 4.4.302
+          - { platform: r1000,        experimental: false }
+          - { platform: geminilake,   experimental: true }
+          - { platform: apollolake,   experimental: true }
+          - { platform: v1000,        experimental: true }
+          - { platform: broadwellnk,  experimental: true }
+          - { platform: denverton,    experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q build-essential bison flex bc libelf-dev libssl-dev xz-utils curl kmod
+
+      - name: Cache Synology downloads
+        uses: actions/cache@v4
+        with:
+          path: synology/work/dl
+          key: dsm-dl-${{ matrix.platform }}-7.2-${{ hashFiles('synology/SHA256SUMS') }}
+
+      - name: Build
+        run: bash synology/build-dsm.sh ${{ matrix.platform }} 7.2
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: onairgt-dsm-${{ matrix.platform }}-7.2
+          path: synology/dist/*.tgz
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: synology/dist/*.tgz

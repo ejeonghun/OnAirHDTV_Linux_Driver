@@ -1,0 +1,14 @@
+Package: onairgt-dkms
+Version: @VERSION@
+Architecture: all
+Section: kernel
+Priority: optional
+Maintainer: ejeonghun <wjdgns4019@gmail.com>
+Depends: dkms, curl | wget, ca-certificates
+Installed-Size: @SIZE@
+Homepage: https://github.com/ejeonghun/OnAirHDTV_Linux_Driver
+Description: OnAir GT USB HDTV (11ba:1101) ATSC DVB driver (DKMS)
+ Out-of-tree dvb-usb-v2 driver (dvb-usb-onairgt) for the OnAir GT USB HDTV
+ tuner (Cypress FX2, LGDT3303, LG TDVS-H062F). DKMS builds it for every
+ installed kernel. The build downloads from kernel.org three kernel-private
+ headers that distribution header packages do not ship.
