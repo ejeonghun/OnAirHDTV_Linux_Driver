@@ -206,6 +206,10 @@ log "modules_prepare"
 cp "$KB/Module.symvers" "$KS/Module.symvers"
 
 # ---------------------------------------------------------------- build
+if [[ "$KVER" == 5.10.* ]]; then
+	command -v python3 >/dev/null || die "python3 required for DSM DVB fix"
+	python3 "$HERE/patch-dvb-feed.py" "$KS/drivers/media/usb/dvb-usb-v2/dvb_usb_core.c"
+fi
 log "building drivers/media"
 "${KMAKE[@]}" M=drivers/media OBJECT_FILES_NON_STANDARD=y modules >"$W/media.log" 2>&1 ||
 	{ tail -40 "$W/media.log"; die "media build failed (log: $W/media.log)"; }
@@ -351,7 +355,7 @@ dsm_config_has_rc_core=$DSM_HAS_RC
 driver_commit=$COMMIT
 driver_sha256=$(cat "$REPO"/*.c | sha256sum | cut -d' ' -f1)
 built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-status=EXPERIMENTAL - not tested on real DSM hardware
+status=EXPERIMENTAL - hardware regression and long-duration testing required
 EOF
 cp "$W/verify.txt" "$P/VERIFY.txt"
 cp "$W/config.delta" "$P/config.delta"
