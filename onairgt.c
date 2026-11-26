@@ -72,31 +72,74 @@ MODULE_PARM_DESC(win_ts, "Apply the Windows driver LGDT3303 tweaks on 8VSB setup
 struct onairgt_state {
 	u8 data[MAX_CMD_LEN];	/* USB transfer buffer, keep first */
 	bool fw_powered;
+	bool disconnecting;
+	int ctrl_error;	/* protected by usb_mutex; re-probe to recover */
 };
 
+/*
+ * Keep both EP1 transfers under usb_mutex. A short reply is not a successful
+ * transaction: the old generic helper leaves the rest of the request buffer
+ * intact, so it could be mistaken for valid I2C status/data.
+ *
+ * A failed transfer can leave an unread reply or a stale data toggle in the
+ * FX2. Do not issue more commands on this session (including frontend polls);
+ * recovery needs a disconnect/re-probe, not an unbounded retry loop.
+ */
 static int onairgt_ctrl_msg(struct dvb_usb_device *d, u8 cmd,
 			    const u8 *wbuf, int wlen, u8 *rbuf, int rlen)
 {
 	struct onairgt_state *st = d_to_priv(d);
-	int ret;
+	int ret, actual;
 
-	if (1 + wlen > MAX_CMD_LEN || rlen > MAX_REPLY_LEN)
-		return -EOPNOTSUPP;
+	if (wlen < 0 || wlen > MAX_CMD_LEN - 1 || rlen < 0 ||
+	    rlen > MAX_REPLY_LEN || (wlen && !wbuf) || (rlen && !rbuf))
+		return -EINVAL;
 
-	/* unplugged: fail quietly instead of logging every frontend poll */
-	if (d->udev->state == USB_STATE_NOTATTACHED)
+	if (READ_ONCE(st->disconnecting) ||
+	    d->udev->state == USB_STATE_NOTATTACHED)
 		return -ENODEV;
 
 	mutex_lock(&d->usb_mutex);
+	if (READ_ONCE(st->disconnecting) ||
+	    d->udev->state == USB_STATE_NOTATTACHED) {
+		ret = -ENODEV;
+		goto out;
+	}
+	if (st->ctrl_error) {
+		ret = st->ctrl_error;
+		goto out;
+	}
+
 	st->data[0] = cmd;
 	if (wlen)
 		memcpy(&st->data[1], wbuf, wlen);
-	ret = dvb_usbv2_generic_rw_locked(d, st->data, 1 + wlen,
-					  rlen ? st->data : NULL, rlen);
-	if (!ret && rlen)
-		memcpy(rbuf, st->data, rlen);
-	mutex_unlock(&d->usb_mutex);
 
+	ret = usb_bulk_msg(d->udev, usb_sndbulkpipe(d->udev, 0x01),
+			   st->data, 1 + wlen, &actual, 2000);
+	if (!ret && actual != 1 + wlen)
+		ret = -EIO;
+	if (ret)
+		goto fault;
+
+	if (rlen) {
+		/* usb_bulk_msg also handles interrupt endpoints (alt 6 EP 81). */
+		ret = usb_bulk_msg(d->udev, usb_rcvbulkpipe(d->udev, 0x81),
+				   st->data, rlen, &actual, 2000);
+		if (!ret && actual != rlen)
+			ret = -EIO;
+		if (ret)
+			goto fault;
+		memcpy(rbuf, st->data, rlen);
+	}
+	goto out;
+
+fault:
+	st->ctrl_error = ret;
+	dev_err(&d->udev->dev,
+		"EP1 command 0x%02x failed=%d; disconnect/re-probe required\n",
+		cmd, ret);
+out:
+	mutex_unlock(&d->usb_mutex);
 	return ret;
 }
 
@@ -404,8 +447,11 @@ static int onairgt_frontend_attach(struct dvb_usb_adapter *adap)
 	int ret;
 
 	/* dvb_usbv2_init() ignores the power_ctrl() result */
-	if (!st->fw_powered)
-		return -ENODEV;
+	if (!st->fw_powered) {
+		ret = st->ctrl_error ? st->ctrl_error : -ENODEV;
+		dev_err(&d->udev->dev, "FX2 initialization failed=%d\n", ret);
+		return ret;
+	}
 
 	/* digital mode; the firmware pulses the demod reset (~50 ms) */
 	ret = onairgt_ctrl_msg(d, CMD_DIGITAL, NULL, 0, &b, 1);
@@ -471,16 +517,16 @@ static int onairgt_get_stream_config(struct dvb_frontend *fe, u8 *ts_type,
 }
 
 /*
- * Called first in dvb_usbv2_disconnect(). After an unplug the frontend
- * thread would keep polling a dead device until every user has closed the
- * adapter; stop it now (same as em28xx/cx231xx).
+ * Called first by dvb_usbv2_disconnect(), for physical removal AND logical
+ * unbind. Reject new control I/O before the framework tears down resources.
+ * This is not a replacement for closing DVB file descriptors before unplug.
  */
 static void onairgt_exit(struct dvb_usb_device *d)
 {
+	struct onairgt_state *st = d_to_priv(d);
 	int i;
 
-	if (d->udev->state != USB_STATE_NOTATTACHED)
-		return;
+	WRITE_ONCE(st->disconnecting, true);
 
 	for (i = 0; i < MAX_NO_OF_FE_PER_ADAP; i++)
 		if (d->adapter[0].fe[i])
