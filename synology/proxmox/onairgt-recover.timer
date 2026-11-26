@@ -1,0 +1,8 @@
+[Unit]
+Description=Periodic OnAir GT readiness check
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+Unit=onairgt-recover.service
+[Install]
+WantedBy=timers.target

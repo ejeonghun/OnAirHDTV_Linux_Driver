@@ -1,9 +1,8 @@
 # OnAir GT on Synology DSM / Xpenology
 
-> **EXPERIMENTAL. NOT TESTED ON REAL DSM HARDWARE.**
+> **EXPERIMENTAL. Runtime-tested on a virtual DSM; physical NAS and stability fixes not yet verified.**
 > The bundles build reproducibly, and each module's vermagic and symbol
-> dependencies are checked against the real DSM kernel build tree. Nobody has
-> loaded them on a running DSM system yet. Loading a kernel module that does
+> dependencies are checked against the real DSM kernel build tree. The epyc7002 bundle has been loaded and used for channel scanning on a DSM VM. Loading a kernel module that does
 > not fit the running kernel can crash the NAS. Try it only on a box you can
 > recover, and report results in an issue.
 
@@ -316,3 +315,83 @@ and the `struct module` size (0x3c0) match Arc's DSM 7.2 modules. No
   the comparison above.
 - [robertklep/dsm7-usb-serial-drivers](https://github.com/robertklep/dsm7-usb-serial-drivers):
   per-platform prebuilt modules, and the "Invalid module format" pitfall.
+
+## Proxmox VM recovery (experimental)
+
+DSM 7.2.2-72806 Update 2, SA6400/epyc7002, kernel 5.10.55+, USB
+11ba:1101 via Proxmox: module load and TVHeadend cable scan verified
+(133 muxes, 42 successful, 224 services, 109 video-bearing channels mapped).
+Not all channels were playback-tested. After VM restart, USB bulk transfers
+sometimes timed out (-110); module reload alone failed, while physical
+unplug/replug restored the frontend. This does not establish that QGA
+caused the failure. The later report of a guest hang after days of use
+lacks a kernel stack trace; these changes are preventive, not a proven
+panic cure.
+
+The DSM 5.10 bundle rolls back unfiltered first-feed start failures:
+the demux will not stop a feed whose start failed, so kill submitted URBs,
+decrement feed_count, clear ADAP_STREAMING and wake frontend sleepers.
+The patch refuses unexpected source layout and does not change kernel
+structures or exports. The bridge rejects short replies, latches failed
+USB control sessions (re-probe required), and rejects new USB I/O during
+logical disconnect. The loader fails if the live frontend/nodes are
+absent or a module cannot be unloaded. Install the entire matching bundle,
+not just the bridge module. The DSM 4.4 framework is not patched.
+
+### Host-side recovery
+
+QGA must support guest-exec as root; PVE must support live USB hotplug
+(machine version, OS type and hotplug setting). The helper supports exactly
+one 11ba:1101 and its VID:PID USB slot, not a PVE resource mapping.
+Run on the PVE node hosting the VM while no recordings are needed.
+Disable the previous custom DSM boot/TVHeadend restart task to avoid races;
+the installed rc.d loader may remain. Ensure DSM has finished booting and
+the updated bundle is installed.
+
+    sudo python3 synology/proxmox/onairgt-recover.py --vmid 100 --slot usb0 --container wiserain-tvheadend-1 --ensure
+
+--ensure does not reset a ready frontend. It attempts recovery at most once
+per guest boot (host reboot clears /run markers). Use --recover for explicit
+manual recovery, which interrupts viewing/recording. It stops the selected
+container and unloads modules via QGA, removes the exact slot via qm set,
+checks guest USB removal, issues USBDEVFS_RESET on the host, restores
+the original USB mapping, and starts the guest loader and container.
+It aborts on QGA failure or a host-bound USB interface; it never forces
+the NAS off or unbinds a host USB controller. If the host's own DVB driver
+claims the tuner, prevent that specific driver from binding or release it
+safely while the VM is stopped before retrying; do not blacklist all USB.
+
+USBDEVFS_RESET is a bus reset, not a VBUS power cycle. If only physical
+unplug restores the tuner, use a verified per-port power-switching hub.
+Confirm with uhubctl that the port really cuts VBUS and affects no other
+devices. For a tuner physically at host 3-1, for example:
+
+    sudo python3 synology/proxmox/onairgt-recover.py --vmid 100 --slot usb0 --container wiserain-tvheadend-1 --recover --power-cycle 3 1
+
+Do NOT cycle storage ports or ganged hubs. Some hubs disconnect data
+without cutting VBUS. Never force uhubctl on unsupported hubs.
+
+If hotplug is pending or rollback uncertain, inspect qm config 100
+--current 1 and qm pending 100, and restore the logged original usb0
+value. A timeout may leave a PVE/QGA command running: diagnose first.
+Do not run concurrently with VM migration, backup or other configuration
+changes. A failed recovery can leave TVHeadend stopped. The script assumes
+the dedicated tuner is adapter0 in the TVHeadend container.
+
+### Optional boot automation
+
+After manually validating the helper, install it as
+/usr/local/sbin/onairgt-recover.py (mode 0755) and the example systemd
+service/timer into /etc/systemd/system, edit VM ID/slot/container as needed,
+then run systemctl daemon-reload and systemctl enable --now
+onairgt-recover.timer on the host. The timer checks every five minutes,
+does not reset a ready tuner, and permits only one automatic reset
+attempt per guest boot. It does not automatically power cycle or
+force-stop a hung NAS. Logs: journalctl -u onairgt-recover.service -b.
+
+Before forcing a hung VM off, capture PVE console, host journal and guest
+kernel logs (configure remote syslog or serial console beforehand). A
+missing frontend/QGA response does not prove a panic. Investigate disk I/O
+errors, OOM, host USB/xHCI and storage latency independently. Regression
+tests required: repeated VM reboot, channel switching, unplug with no
+open DVB handles, and a multi-day soak.

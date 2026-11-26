@@ -1,0 +1,7 @@
+[Unit]
+Description=Check OnAir GT in DSM VM
+After=pve-guests.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/onairgt-recover.py --vmid 100 --slot usb0 --container wiserain-tvheadend-1 --ensure
+TimeoutStartSec=900
