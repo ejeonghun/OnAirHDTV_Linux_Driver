@@ -35,15 +35,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test download recovery
+        run: bash synology/test-download.sh
+
       - name: Host packages
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q build-essential bison flex bc libelf-dev libssl-dev xz-utils curl kmod
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update -q
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -q build-essential bison flex bc libelf-dev libssl-dev xz-utils curl kmod python3
 
       - name: Cache Synology downloads
         uses: actions/cache@v4
         with:
-          path: synology/work/dl
+          path: synology/work/dl/*.txz
           key: dsm-dl-${{ matrix.platform }}-7.2-${{ hashFiles('synology/SHA256SUMS') }}
 
       - name: Build
