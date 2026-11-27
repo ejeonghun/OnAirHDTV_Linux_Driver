@@ -79,22 +79,8 @@ done
 
 # ---------------------------------------------------------------- download
 mkdir -p "$DL_DIR" "$DIST_DIR"
-fetch() { # url local-name
-	local out=$DL_DIR/$2 sum pinned
-	if [ ! -s "$out" ]; then
-		log "downloading $1"
-		curl -fL --retry 3 -o "$out.part" "$1" && mv "$out.part" "$out"
-	fi
-	sum=$(sha256sum "$out" | cut -d' ' -f1)
-	pinned=$(awk -v f="$2" '$2 == f { print $1 }' "$HERE/SHA256SUMS" 2>/dev/null)
-	if [ -n "$pinned" ]; then
-		[ "$sum" = "$pinned" ] || die "$2: sha256 $sum does not match pinned $pinned"
-	elif [ "${STRICT_CHECKSUMS:-0}" = 1 ]; then
-		die "$2 has no pinned sha256 in synology/SHA256SUMS ($sum)"
-	else
-		echo "warning: $2 not pinned in synology/SHA256SUMS: $sum" >&2
-	fi
-}
+# shellcheck source=synology/download.sh
+source "$HERE/download.sh"
 fetch "$TC_URL"   "$TC_TXZ"
 fetch "$DEV_URL"  "$DEV_TXZ"
 fetch "$KSRC_URL" "$KSRC_PLAT-$GPL_VER-$KSRC_TXZ"
@@ -206,6 +192,10 @@ log "modules_prepare"
 cp "$KB/Module.symvers" "$KS/Module.symvers"
 
 # ---------------------------------------------------------------- build
+if [[ "$KVER" == 5.10.* ]]; then
+	command -v python3 >/dev/null || die "python3 required for DSM DVB fix"
+	python3 "$HERE/patch-dvb-feed.py" "$KS/drivers/media/usb/dvb-usb-v2/dvb_usb_core.c"
+fi
 log "building drivers/media"
 "${KMAKE[@]}" M=drivers/media OBJECT_FILES_NON_STANDARD=y modules >"$W/media.log" 2>&1 ||
 	{ tail -40 "$W/media.log"; die "media build failed (log: $W/media.log)"; }
@@ -351,7 +341,7 @@ dsm_config_has_rc_core=$DSM_HAS_RC
 driver_commit=$COMMIT
 driver_sha256=$(cat "$REPO"/*.c | sha256sum | cut -d' ' -f1)
 built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-status=EXPERIMENTAL - not tested on real DSM hardware
+status=EXPERIMENTAL - hardware regression and long-duration testing required
 EOF
 cp "$W/verify.txt" "$P/VERIFY.txt"
 cp "$W/config.delta" "$P/config.delta"

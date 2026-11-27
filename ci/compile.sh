@@ -17,6 +17,31 @@ T=${1:?target}
 SRC=${SRC:-/src}
 WORK=/tmp/onairgt-build
 
+# Older APT can exit 0 on a partial index update. Reject that case and
+# retry without silently falling back to stale package indexes.
+retry_apt() {
+	attempt=1
+	apt_log=$(mktemp)
+	while [ "$attempt" -le 3 ]; do
+		rc=0
+		LC_ALL=C apt-get -o Acquire::Retries=3 \
+			-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+			"$@" >"$apt_log" 2>&1 || rc=$?
+		cat "$apt_log"
+		if [ "$rc" = 0 ]; then
+			if [ "$1" != update ] || ! grep -Eq 'Failed to fetch|Some index files failed to download' "$apt_log"; then
+				rm -f "$apt_log"
+				return 0
+			fi
+		fi
+		echo "APT $1 failed or indexes incomplete (attempt $attempt/3)" >&2
+		[ "$attempt" = 3 ] || sleep "$((attempt * 10))"
+		attempt=$((attempt + 1))
+	done
+	rm -f "$apt_log"
+	return 1
+}
+
 apt_setup() {
 	export DEBIAN_FRONTEND=noninteractive
 	# Debian 11 left the regular mirrors in 2026
@@ -27,8 +52,8 @@ apt_setup() {
 		deb http://archive.debian.org/debian-security bullseye-security main
 		EOF
 	fi
-	apt-get update -qq
-	apt-get install -y -qq build-essential curl ca-certificates kmod bc "$@" >/dev/null
+	retry_apt update -qq
+	retry_apt install -y -qq build-essential curl ca-certificates kmod bc "$@"
 }
 
 vanilla() { # version

@@ -1,7 +1,7 @@
 #!/bin/sh
 # OnAir GT DVB driver loader for Synology DSM / Xpenology (EXPERIMENTAL).
 #
-# usage: onairgt-dsm.sh start|stop|restart|status|nodes
+# usage: onairgt-dsm.sh start|stop|restart|status|nodes|ready
 #   start    load DSM-provided dependencies, then the bundled modules in
 #            modules.load order, and make sure /dev/dvb nodes exist
 #   stop     unload the bundled modules (reverse order)
@@ -53,11 +53,33 @@ udev_rule() {
 	done
 }
 
-have_frontend() {
+# Match the USB ancestry, not stale nodes or an unrelated DVB tuner.
+onair_frontend() {
 	for f in /sys/class/dvb/*frontend*; do
-		[ -e "$f" ] && return 0
+		[ -e "$f" ] || continue
+		p=$(readlink -f "$f") || continue
+		while [ "$p" != / ] && [ -n "$p" ]; do
+			if [ -r "$p/idVendor" ] && [ -r "$p/idProduct" ] &&
+			   [ "$(cat "$p/idVendor")" = 11ba ] &&
+			   [ "$(cat "$p/idProduct")" = 1101 ]; then
+				printf '%s\n' "$f"
+				return 0
+			fi
+			p=$(dirname "$p")
+		done
 	done
 	return 1
+}
+
+have_frontend() { onair_frontend >/dev/null; }
+
+ready() {
+	f=$(onair_frontend) || return 1
+	node=$(sed -n 's/^DEVNAME=//p' "$f/uevent")
+	case "$node" in dvb/adapter*/frontend*) ;; *) return 1 ;; esac
+	dir="/dev/$(dirname "$node")"
+	[ -c "/dev/$node" ] && [ -c "$dir/demux0" ] &&
+	[ -c "$dir/dvr0" ] && [ -c "$dir/net0" ]
 }
 
 nodes() {
@@ -111,11 +133,15 @@ start() {
 	done
 	nodes
 	dmesg | grep -iE 'onairgt|dvb-usb|lgdt330x|dvb_usb_v2' | tail -n 15
+	ready || { say "ERROR: OnAir GT frontend not ready; reset/reconnect USB before retrying"; return 1; }
 }
 
 stop() {
 	for m in $(awk '$1 == "ko" { print $2 }' "$DIR/modules.load" | sed '1!G;h;$!d'); do
-		loaded "$m" && rmmod "$m" && say "rmmod $m"
+		if loaded "$m"; then
+			rmmod "$m" || { say "ERROR: cannot unload $m; stop DVB users first"; return 1; }
+			say "rmmod $m"
+		fi
 	done
 	return 0
 }
@@ -132,8 +158,9 @@ status() {
 case ${1:-} in
 start) start ;;
 stop) stop ;;
-restart) stop; start ;;
+restart) stop && start ;;
 status) status ;;
 nodes) nodes ;;
-*) echo "usage: $0 start|stop|restart|status|nodes" >&2; exit 1 ;;
+ready) ready ;;
+*) echo "usage: $0 start|stop|restart|status|nodes|ready" >&2; exit 1 ;;
 esac

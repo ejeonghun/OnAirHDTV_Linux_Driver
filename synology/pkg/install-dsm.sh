@@ -43,7 +43,7 @@ if [ "$(uname -r)" != "$want" ] || [ "$have" != "$platform" ]; then
 	echo "this bundle is for $platform / kernel $want; this system is ${have:-unknown} / $(uname -r)" >&2
 	[ $FORCE = 1 ] || exit 1
 fi
-echo "OnAir GT DSM bundle for $platform / $want -- EXPERIMENTAL, untested on real hardware"
+echo "OnAir GT DSM bundle for $platform / $want -- EXPERIMENTAL; see runtime verification notes"
 
 # validate the firmware before touching the system
 tmp=""
@@ -97,7 +97,9 @@ EOF
 	chmod 755 /usr/local/etc/rc.d/onairgt-dvb.sh
 fi
 
-[ $START = 1 ] && "$PREFIX/onairgt-dsm.sh" start
+if [ "$START" = 1 ]; then
+	"$PREFIX/onairgt-dsm.sh" start
+fi
 
 cat <<EOF
 
